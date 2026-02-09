@@ -1,0 +1,11 @@
+@import "tailwindcss";
+
+/*
+ * Datrix brand color overrides
+ * These extend the default HeroUI Native theme
+ */
+@theme {
+  /* Datrix brand primary (override accent) */
+  --color-primary: #1E3A8A;
+  --color-primary-foreground: #FFFFFF;
+}

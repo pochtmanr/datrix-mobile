@@ -1,0 +1,26 @@
+diff --git a/node_modules/heroui-native/lib/module/helpers/external/hooks/use-theme-color.js b/node_modules/heroui-native/lib/module/helpers/external/hooks/use-theme-color.js
+index 0a268a1..8883dc1 100644
+--- a/node_modules/heroui-native/lib/module/helpers/external/hooks/use-theme-color.js
++++ b/node_modules/heroui-native/lib/module/helpers/external/hooks/use-theme-color.js
+@@ -43,7 +43,7 @@ export function useThemeColor(themeColor) {
+     if (typeof color === 'number') {
+       return String(color);
+     }
+-    return 'invalid';
++    return 'transparent';
+   });
+   if (isArray) {
+     return processedColors;
+diff --git a/node_modules/heroui-native/src/helpers/external/hooks/use-theme-color.ts b/node_modules/heroui-native/src/helpers/external/hooks/use-theme-color.ts
+index a1e842c..d15f89d 100644
+--- a/node_modules/heroui-native/src/helpers/external/hooks/use-theme-color.ts
++++ b/node_modules/heroui-native/src/helpers/external/hooks/use-theme-color.ts
+@@ -127,7 +127,7 @@ export function useThemeColor(
+     if (typeof color === 'number') {
+       return String(color);
+     }
+-    return 'invalid';
++    return 'transparent';
+   });
+ 
+   if (isArray) {
