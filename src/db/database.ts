@@ -27,6 +27,13 @@ export async function initDatabase(): Promise<SQLite.SQLiteDatabase> {
 }
 
 /**
+ * Returns true if the database has been initialized.
+ */
+export function isDatabaseReady(): boolean {
+  return db !== null;
+}
+
+/**
  * Returns the singleton database instance.
  * Throws if initDatabase() hasn't been called yet.
  */

@@ -4,6 +4,7 @@ import { pullChanges } from './pullChanges';
 import { pushChanges } from './pushChanges';
 import { cleanupUnassigned } from './cleanupUnassigned';
 import { useSyncStore } from '@/store/syncStore';
+import { isDatabaseReady } from '@/db';
 import { SYNC_CONFIG } from '@/lib/constants';
 
 let pullInterval: ReturnType<typeof setInterval> | null = null;
@@ -83,7 +84,7 @@ export function schedulePush(): void {
   if (pushTimeout) clearTimeout(pushTimeout);
 
   pushTimeout = setTimeout(async () => {
-    if (!useSyncStore.getState().isOnline) return;
+    if (!isDatabaseReady() || !useSyncStore.getState().isOnline) return;
 
     try {
       useSyncStore.getState().setSyncing(true);
@@ -100,7 +101,7 @@ export function schedulePush(): void {
  * Runs a full sync cycle: push pending → pull updates → cleanup.
  */
 async function runFullSync(userId: string): Promise<void> {
-  if (useSyncStore.getState().isSyncing) return;
+  if (!isDatabaseReady() || useSyncStore.getState().isSyncing) return;
 
   try {
     useSyncStore.getState().setSyncing(true);
@@ -122,7 +123,7 @@ async function runFullSync(userId: string): Promise<void> {
  * Runs a pull-only cycle.
  */
 async function runPull(userId: string): Promise<void> {
-  if (useSyncStore.getState().isSyncing) return;
+  if (!isDatabaseReady() || useSyncStore.getState().isSyncing) return;
 
   try {
     useSyncStore.getState().setSyncing(true);

@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -14,43 +14,80 @@ import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
+import { Paths, Directory } from 'expo-file-system';
 import Animated, { FadeInDown, FadeInUp, Easing } from 'react-native-reanimated';
 import {
   Mail,
   Phone,
   Hash,
   Briefcase,
+  RefreshCw,
+  WifiOff,
+  Wifi,
+  CheckCircle,
+  AlertTriangle,
   LogOut,
   Pencil,
-  ChevronLeft,
+  Camera,
   Users,
   BarChart3,
   Bell,
   Settings,
-  Camera,
   HelpCircle,
   Shield,
   ExternalLink,
+  ImageIcon,
+  HardDrive,
 } from 'lucide-react-native';
 
 import { useAuth } from '@/auth';
 import { supabase } from '@/api/supabase';
-import { ROLE_LABELS } from '@/lib/constants';
+import { useSyncStore, useDraftStore } from '@/store';
+import { USER_ROLE_LABELS } from '@/lib/constants';
 import { colors } from '@/theme/colors';
-import { getInitials } from '@/lib/utils';
+import { formatPhoneNumber, getInitials, formatFileSize } from '@/lib/utils';
+import { checkFullConnectivity } from '@/lib/network';
+import { forceSync } from '@/sync';
 
 const AnimatedView = Animated.createAnimatedComponent(View);
 
 /**
  * Manager Profile Screen
- * User profile, settings, and logout
+ * User profile, quick actions to sub-screens, sync status, and logout.
+ * All data is scoped to the authenticated manager's assigned projects.
  */
 export default function ManagerProfileScreen() {
   const insets = useSafeAreaInsets();
   const { user, signOut, refreshUser } = useAuth();
+  const { isOnline, pendingCount, lastSyncAt, syncErrors } = useSyncStore();
 
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+  const [isCheckingConnection, setIsCheckingConnection] = useState(false);
+  const [storageUsed, setStorageUsed] = useState<string>('');
+  const [showSyncErrors, setShowSyncErrors] = useState(false);
+  const [isForceSyncing, setIsForceSyncing] = useState(false);
+
+  // Photo queue stats
+  const photoQueue = useDraftStore((s) => s.photoQueue);
+  const photosPending = photoQueue.filter((p) => p.status === 'pending').length;
+  const photosUploading = photoQueue.filter((p) => p.status === 'uploading').length;
+  const photosFailed = photoQueue.filter((p) => p.status === 'failed').length;
+  const photosTotal = photosPending + photosUploading + photosFailed;
+
+  useEffect(() => {
+    try {
+      const photosDir = new Directory(Paths.document, 'photos');
+      if (photosDir.exists) {
+        const size = photosDir.size;
+        if (size !== null) {
+          setStorageUsed(formatFileSize(size));
+        }
+      }
+    } catch {
+      // Directory may not exist yet
+    }
+  }, []);
 
   const handleChangePhoto = useCallback(async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -131,7 +168,68 @@ export default function ManagerProfileScreen() {
     );
   }, [signOut]);
 
-  // Card styling
+  const handleCheckConnection = useCallback(async () => {
+    setIsCheckingConnection(true);
+    try {
+      const { hasNetwork, supabaseReachable } = await checkFullConnectivity();
+      useSyncStore.getState().setOnline(supabaseReachable);
+
+      if (!hasNetwork) {
+        Alert.alert('בדיקת חיבור', 'אין חיבור לרשת');
+      } else if (!supabaseReachable) {
+        Alert.alert('בדיקת חיבור', 'יש חיבור לרשת אך השרת לא נגיש');
+      } else {
+        Alert.alert('בדיקת חיבור', 'החיבור תקין');
+      }
+    } catch {
+      Alert.alert('בדיקת חיבור', 'שגיאה בבדיקת החיבור');
+    } finally {
+      setIsCheckingConnection(false);
+    }
+  }, []);
+
+  const handleForceSync = useCallback(async () => {
+    setIsForceSyncing(true);
+    try {
+      await forceSync();
+      Alert.alert('סנכרון', 'הסנכרון הושלם בהצלחה');
+    } catch {
+      Alert.alert('סנכרון', 'שגיאה בסנכרון. נסה שוב.');
+    } finally {
+      setIsForceSyncing(false);
+    }
+  }, []);
+
+  const formatSyncTime = (date: Date | string) => {
+    const d = new Date(date);
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const syncDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const diffDays = Math.floor((today.getTime() - syncDay.getTime()) / (1000 * 60 * 60 * 24));
+
+    const time = d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+
+    if (diffDays === 0) return time;
+    if (diffDays === 1) return `אתמול, ${time}`;
+    return `לפני ${diffDays} ימים`;
+  };
+
+  const getSyncStatus = () => {
+    if (!isOnline) {
+      return { icon: WifiOff, text: 'אין חיבור', color: colors.warning[500] };
+    }
+    if (syncErrors.length > 0) {
+      return { icon: AlertTriangle, text: 'שגיאות סנכרון', color: colors.danger[500] };
+    }
+    if (pendingCount > 0) {
+      return { icon: RefreshCw, text: `${pendingCount} פריטים ממתינים`, color: colors.warning[500] };
+    }
+    return { icon: CheckCircle, text: 'מסונכרן', color: colors.success[500] };
+  };
+
+  const syncStatus = getSyncStatus();
+  const SyncIcon = syncStatus.icon;
+
   const cardBg = 'rgba(255, 255, 255, 0.95)';
   const borderColor = 'rgba(0, 0, 0, 0.08)';
 
@@ -170,7 +268,7 @@ export default function ManagerProfileScreen() {
               פרטי משתמש
             </Text>
             <Pressable
-              onPress={() => Alert.alert('בקרוב', 'עריכת פרופיל תהיה זמינה בגרסה הבאה')}
+              onPress={() => router.push('/(manager)/profile/edit')}
               style={({ pressed }) => [
                 styles.editIconButton,
                 { backgroundColor: colors.primary[50], opacity: pressed ? 0.7 : 1 },
@@ -216,7 +314,7 @@ export default function ManagerProfileScreen() {
                 </Text>
                 <View style={[styles.roleBadge, { backgroundColor: `${colors.primary[500]}15` }]}>
                   <Text style={[styles.roleText, { color: colors.primary[600] }]}>
-                    {user?.role ? ROLE_LABELS[user.role] : 'מנהל'}
+                    {user?.role ? USER_ROLE_LABELS[user.role] : 'מנהל'}
                   </Text>
                 </View>
               </View>
@@ -237,22 +335,20 @@ export default function ManagerProfileScreen() {
               </View>
             </View>
 
-            {user?.phone && (
-              <>
-                <View style={[styles.divider, { backgroundColor: colors.neutral[100] }]} />
-                <View style={styles.infoRow}>
-                  <View style={[styles.infoIcon, { backgroundColor: colors.neutral[100] }]}>
-                    <Phone size={18} color={colors.neutral[500]} />
-                  </View>
-                  <View style={styles.infoContent}>
-                    <Text style={[styles.infoLabel, { color: colors.neutral[500] }]}>טלפון</Text>
-                    <Text style={[styles.infoValue, { color: colors.neutral[900] }]}>
-                      {user.phone}
-                    </Text>
-                  </View>
-                </View>
-              </>
-            )}
+            <View style={[styles.divider, { backgroundColor: colors.neutral[100] }]} />
+
+            {/* Phone Row */}
+            <View style={styles.infoRow}>
+              <View style={[styles.infoIcon, { backgroundColor: colors.neutral[100] }]}>
+                <Phone size={18} color={colors.neutral[500]} />
+              </View>
+              <View style={styles.infoContent}>
+                <Text style={[styles.infoLabel, { color: colors.neutral[500] }]}>טלפון</Text>
+                <Text style={[styles.infoValue, { color: colors.neutral[900] }]}>
+                  {formatPhoneNumber(user?.phone ?? user?.phoneNumber) || '-'}
+                </Text>
+              </View>
+            </View>
 
             {user?.employeeNumber && (
               <>
@@ -281,14 +377,14 @@ export default function ManagerProfileScreen() {
               <View style={styles.infoContent}>
                 <Text style={[styles.infoLabel, { color: colors.neutral[500] }]}>תפקיד</Text>
                 <Text style={[styles.infoValue, { color: colors.neutral[900] }]}>
-                  {user?.role ? ROLE_LABELS[user.role] : '-'}
+                  {user?.role ? USER_ROLE_LABELS[user.role] : '-'}
                 </Text>
               </View>
             </View>
           </View>
         </AnimatedView>
 
-        {/* Quick Actions */}
+        {/* Quick Actions — navigate to sub-screens */}
         <AnimatedView
           entering={FadeInUp.duration(500).delay(400).easing(Easing.out(Easing.ease))}
           style={styles.section}
@@ -300,7 +396,7 @@ export default function ManagerProfileScreen() {
           <View style={styles.quickActionsGrid}>
             {/* Team Management */}
             <Pressable
-              onPress={() => Alert.alert('בקרוב', 'ניהול צוות יהיה זמין בגרסה הבאה')}
+              onPress={() => router.push('/(manager)/profile/team')}
               style={({ pressed }) => [
                 styles.quickActionCard,
                 {
@@ -320,7 +416,7 @@ export default function ManagerProfileScreen() {
 
             {/* Reports */}
             <Pressable
-              onPress={() => Alert.alert('בקרוב', 'דוחות יהיו זמינים בגרסה הבאה')}
+              onPress={() => router.push('/(manager)/profile/reports')}
               style={({ pressed }) => [
                 styles.quickActionCard,
                 {
@@ -360,7 +456,7 @@ export default function ManagerProfileScreen() {
 
             {/* Settings */}
             <Pressable
-              onPress={() => Alert.alert('בקרוב', 'הגדרות יהיו זמינות בגרסה הבאה')}
+              onPress={() => router.push('/(manager)/profile/settings')}
               style={({ pressed }) => [
                 styles.quickActionCard,
                 {
@@ -380,17 +476,202 @@ export default function ManagerProfileScreen() {
           </View>
         </AnimatedView>
 
-        {/* Support & Legal */}
+        {/* Sync Status Card */}
         <AnimatedView
           entering={FadeInUp.duration(500).delay(450).easing(Easing.out(Easing.ease))}
           style={styles.section}
         >
-          <Text style={[styles.sectionTitle, { color: colors.neutral[900] }]}>
+          <Text style={[styles.sectionTitle, { color: colors.neutral[900], marginBottom: 10 }]}>
+            סטטוס סנכרון
+          </Text>
+
+          <View style={[styles.card, { backgroundColor: cardBg, borderColor }]}>
+            {/* Current status */}
+            <View style={styles.infoRow}>
+              <View style={[styles.infoIcon, { backgroundColor: `${syncStatus.color}15` }]}>
+                <SyncIcon size={18} color={syncStatus.color} />
+              </View>
+              <View style={styles.infoContent}>
+                <Text style={[styles.infoLabel, { color: colors.neutral[500] }]}>מצב נוכחי</Text>
+                <Text style={[styles.infoValue, { color: syncStatus.color }]}>
+                  {syncStatus.text}
+                </Text>
+              </View>
+              <View style={[styles.statusDot, { backgroundColor: syncStatus.color }]} />
+            </View>
+
+            {/* Last sync time */}
+            {lastSyncAt && (
+              <>
+                <View style={[styles.divider, { backgroundColor: colors.neutral[100] }]} />
+                <View style={styles.infoRow}>
+                  <View style={[styles.infoIcon, { backgroundColor: colors.neutral[100] }]}>
+                    <RefreshCw size={18} color={colors.neutral[500]} />
+                  </View>
+                  <View style={styles.infoContent}>
+                    <Text style={[styles.infoLabel, { color: colors.neutral[500] }]}>
+                      סנכרון אחרון
+                    </Text>
+                    <Text style={[styles.infoValue, { color: colors.neutral[900] }]}>
+                      {formatSyncTime(lastSyncAt)}
+                    </Text>
+                  </View>
+                </View>
+              </>
+            )}
+
+            {/* Photo upload queue */}
+            {photosTotal > 0 && (
+              <>
+                <View style={[styles.divider, { backgroundColor: colors.neutral[100] }]} />
+                <View style={styles.infoRow}>
+                  <View style={[styles.infoIcon, { backgroundColor: colors.warning[50] }]}>
+                    <ImageIcon size={18} color={colors.warning[600]} />
+                  </View>
+                  <View style={styles.infoContent}>
+                    <Text style={[styles.infoLabel, { color: colors.neutral[500] }]}>
+                      תמונות בתור העלאה
+                    </Text>
+                    <Text style={[styles.infoValue, { color: colors.neutral[900] }]}>
+                      {photosPending > 0 && `${photosPending} ממתינות`}
+                      {photosUploading > 0 && `${photosPending > 0 ? ' · ' : ''}${photosUploading} בהעלאה`}
+                      {photosFailed > 0 && (
+                        <Text style={{ color: colors.danger[500] }}>
+                          {(photosPending > 0 || photosUploading > 0) ? ' · ' : ''}{photosFailed} נכשלו
+                        </Text>
+                      )}
+                    </Text>
+                  </View>
+                </View>
+              </>
+            )}
+
+            {/* Local storage usage */}
+            {storageUsed ? (
+              <>
+                <View style={[styles.divider, { backgroundColor: colors.neutral[100] }]} />
+                <View style={styles.infoRow}>
+                  <View style={[styles.infoIcon, { backgroundColor: colors.neutral[100] }]}>
+                    <HardDrive size={18} color={colors.neutral[500]} />
+                  </View>
+                  <View style={styles.infoContent}>
+                    <Text style={[styles.infoLabel, { color: colors.neutral[500] }]}>
+                      אחסון מקומי
+                    </Text>
+                    <Text style={[styles.infoValue, { color: colors.neutral[900] }]}>
+                      {storageUsed}
+                    </Text>
+                  </View>
+                </View>
+              </>
+            ) : null}
+
+            {/* Sync errors expandable */}
+            {syncErrors.length > 0 && (
+              <>
+                <View style={[styles.divider, { backgroundColor: colors.neutral[100] }]} />
+                <Pressable
+                  onPress={() => setShowSyncErrors(!showSyncErrors)}
+                  style={styles.infoRow}
+                >
+                  <View style={[styles.infoIcon, { backgroundColor: colors.danger[50] }]}>
+                    <AlertTriangle size={18} color={colors.danger[500]} />
+                  </View>
+                  <View style={styles.infoContent}>
+                    <Text style={[styles.infoLabel, { color: colors.neutral[500] }]}>
+                      שגיאות ({syncErrors.length})
+                    </Text>
+                    <Text style={[styles.infoValue, { color: colors.danger[600] }]}>
+                      {showSyncErrors ? 'הסתר פרטים ▲' : 'הצג פרטים ▼'}
+                    </Text>
+                  </View>
+                </Pressable>
+                {showSyncErrors && syncErrors.map((err, i) => (
+                  <View
+                    key={`${err.table}-${err.recordId}-${i}`}
+                    style={{
+                      backgroundColor: colors.danger[50],
+                      borderRadius: 8,
+                      padding: 10,
+                      marginTop: 6,
+                    }}
+                  >
+                    <Text style={{ fontSize: 12, color: colors.danger[700], textAlign: 'right' }}>
+                      {err.table} · {err.error}
+                    </Text>
+                    <Text style={{ fontSize: 11, color: colors.danger[400], textAlign: 'right', marginTop: 2 }}>
+                      {err.timestamp ? new Date(err.timestamp).toLocaleString('he-IL') : ''}
+                    </Text>
+                  </View>
+                ))}
+              </>
+            )}
+
+            {/* Action buttons */}
+            <View style={[styles.divider, { backgroundColor: colors.neutral[100] }]} />
+            <View style={{ flexDirection: 'row-reverse', gap: 10, marginTop: 4 }}>
+              <Pressable
+                onPress={handleForceSync}
+                disabled={isForceSyncing || !isOnline}
+                style={({ pressed }) => ({
+                  flex: 1,
+                  flexDirection: 'row-reverse',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 6,
+                  paddingVertical: 10,
+                  borderRadius: 12,
+                  backgroundColor: colors.primary[50],
+                  opacity: pressed || isForceSyncing || !isOnline ? 0.7 : 1,
+                })}
+              >
+                {isForceSyncing ? (
+                  <ActivityIndicator size="small" color={colors.primary[600]} />
+                ) : (
+                  <RefreshCw size={16} color={colors.primary[600]} />
+                )}
+                <Text style={{ fontSize: 13, fontWeight: '500', color: colors.primary[700] }}>
+                  סנכרן עכשיו
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={handleCheckConnection}
+                disabled={isCheckingConnection}
+                style={({ pressed }) => ({
+                  flex: 1,
+                  flexDirection: 'row-reverse',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 6,
+                  paddingVertical: 10,
+                  borderRadius: 12,
+                  backgroundColor: colors.neutral[100],
+                  opacity: pressed || isCheckingConnection ? 0.7 : 1,
+                })}
+              >
+                {isCheckingConnection ? (
+                  <ActivityIndicator size="small" color={colors.primary[600]} />
+                ) : (
+                  <Wifi size={16} color={colors.primary[600]} />
+                )}
+                <Text style={{ fontSize: 13, fontWeight: '500', color: colors.primary[700] }}>
+                  בדוק חיבור
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </AnimatedView>
+
+        {/* Support & Legal */}
+        <AnimatedView
+          entering={FadeInUp.duration(500).delay(500).easing(Easing.out(Easing.ease))}
+          style={styles.section}
+        >
+          <Text style={[styles.sectionTitle, { color: colors.neutral[900], marginBottom: 10 }]}>
             תמיכה ומידע
           </Text>
 
           <View style={[styles.card, { backgroundColor: cardBg, borderColor }]}>
-            {/* Support */}
             <Pressable
               onPress={() => Linking.openURL('https://datrix.co.il/support')}
               style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
@@ -411,7 +692,6 @@ export default function ManagerProfileScreen() {
 
             <View style={[styles.divider, { backgroundColor: colors.neutral[100] }]} />
 
-            {/* Privacy Policy */}
             <Pressable
               onPress={() => Linking.openURL('https://datrix.co.il/privacy')}
               style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
@@ -434,7 +714,7 @@ export default function ManagerProfileScreen() {
 
         {/* Logout */}
         <AnimatedView
-          entering={FadeInUp.duration(500).delay(500).easing(Easing.out(Easing.ease))}
+          entering={FadeInUp.duration(500).delay(550).easing(Easing.out(Easing.ease))}
           style={styles.section}
         >
           <Pressable
@@ -495,7 +775,7 @@ const styles = StyleSheet.create({
     letterSpacing: -0.5,
   },
 
-  // Profile Row (inside card)
+  // Profile Row
   profileRow: {
     flexDirection: 'row-reverse',
     alignItems: 'center',
@@ -596,12 +876,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  linkRow: {
-    flexDirection: 'row-reverse',
-    alignItems: 'center',
-    paddingVertical: 10,
-    gap: 12,
-  },
   infoContent: {
     flex: 1,
     alignItems: 'flex-end',
@@ -620,12 +894,25 @@ const styles = StyleSheet.create({
     marginHorizontal: -16,
     marginLeft: 52,
   },
+  statusDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginRight: 8,
+  },
+  linkRow: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    paddingVertical: 10,
+    gap: 12,
+  },
 
   // Quick Actions
   quickActionsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 12,
+    marginTop: 12,
   },
   quickActionCard: {
     width: '48%',

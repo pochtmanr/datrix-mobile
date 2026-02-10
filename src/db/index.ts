@@ -1,1 +1,1 @@
-export { initDatabase, getDatabase, closeDatabase, deleteDatabase } from './database';
+export { initDatabase, getDatabase, isDatabaseReady, closeDatabase, deleteDatabase } from './database';
